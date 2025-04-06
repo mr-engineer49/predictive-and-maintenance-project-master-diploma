@@ -805,9 +805,9 @@ def system_efficiency(vehicle_data, anomaly_results, key_prefix=""):
             'axis': {'range': [0, 100]},
             'bar': {'color': efficiency_color},
             'steps': [
-                {'range': [0, 60], 'color': "#FF563030"},
-                {'range': [60, 80], 'color': "#FFAB0030"},
-                {'range': [80, 100], 'color': "#36B37E30"}
+                {'range': [0, 60], 'color': "rgba(255, 86, 48, 0.3)"},
+                {'range': [60, 80], 'color': "rgba(255, 171, 0, 0.3)"},
+                {'range': [80, 100], 'color': "rgba(54, 179, 126, 0.3)"}
             ],
             'threshold': {
                 'line': {'color': "red", 'width': 4},
