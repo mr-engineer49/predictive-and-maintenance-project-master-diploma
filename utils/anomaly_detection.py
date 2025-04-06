@@ -2,9 +2,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
-import tensorflow as tf
-from tensorflow.keras.models import Sequential, Model
-from tensorflow.keras.layers import Input, LSTM, Dense, RepeatVector, TimeDistributed
+from sklearn.decomposition import PCA
 
 class IsolationForestDetector:
     """Anomaly detection using Isolation Forest algorithm."""
@@ -65,37 +63,19 @@ class IsolationForestDetector:
         return anomalies, normalized_scores
 
 
-class LSTMAutoencoder:
-    """Anomaly detection using LSTM Autoencoder."""
+class PCADetector:
+    """Anomaly detection using PCA reconstruction error."""
     
-    def __init__(self, timesteps=10, n_features=None, threshold_multiplier=2.0):
-        self.timesteps = timesteps
-        self.n_features = n_features
+    def __init__(self, n_components=0.95, threshold_multiplier=2.0):
+        self.n_components = n_components
         self.threshold_multiplier = threshold_multiplier
-        self.model = None
+        self.pca = PCA(n_components=n_components)
         self.scaler = StandardScaler()
         self.reconstruction_error_threshold = None
         self.is_fitted = False
     
-    def _build_model(self, n_features):
-        """Build the LSTM Autoencoder model."""
-        # Build encoder
-        inputs = Input(shape=(self.timesteps, n_features))
-        encoded = LSTM(32, activation='relu', return_sequences=False)(inputs)
-        
-        # Build decoder
-        decoded = RepeatVector(self.timesteps)(encoded)
-        decoded = LSTM(32, activation='relu', return_sequences=True)(decoded)
-        decoded = TimeDistributed(Dense(n_features))(decoded)
-        
-        # Build autoencoder
-        autoencoder = Model(inputs, decoded)
-        autoencoder.compile(optimizer='adam', loss='mse')
-        
-        return autoencoder
-    
     def _preprocess(self, df, fit=False):
-        """Preprocess the data for the LSTM Autoencoder."""
+        """Preprocess the data for PCA."""
         # Select numerical columns only
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         numeric_cols = [col for col in numeric_cols if col not in ['is_anomaly', 'timestamp']]
@@ -108,40 +88,22 @@ class LSTMAutoencoder:
         else:
             X_scaled = self.scaler.transform(X)
         
-        # Create sequences
-        X_sequences = []
-        for i in range(len(X_scaled) - self.timesteps + 1):
-            X_sequences.append(X_scaled[i:i+self.timesteps])
-        
-        if not X_sequences:
-            return np.array([]), numeric_cols
-        
-        return np.array(X_sequences), numeric_cols
+        return X_scaled, numeric_cols
     
-    def fit(self, df, epochs=10, batch_size=32, validation_split=0.1):
-        """Fit the LSTM Autoencoder to the data."""
-        X_sequences, numeric_cols = self._preprocess(df, fit=True)
+    def fit(self, df):
+        """Fit the PCA model to the data."""
+        X_scaled, _ = self._preprocess(df, fit=True)
         
-        if len(X_sequences) == 0:
-            raise ValueError("Not enough data points to create sequences.")
+        if len(X_scaled) == 0:
+            raise ValueError("Not enough data points.")
         
-        self.n_features = X_sequences.shape[2]
-        
-        # Build the model
-        self.model = self._build_model(self.n_features)
-        
-        # Train the model
-        self.model.fit(
-            X_sequences, X_sequences,
-            epochs=epochs,
-            batch_size=batch_size,
-            validation_split=validation_split,
-            verbose=0
-        )
+        # Fit PCA
+        self.pca.fit(X_scaled)
         
         # Calculate reconstruction error on training data
-        reconstructions = self.model.predict(X_sequences)
-        mse = np.mean(np.power(X_sequences - reconstructions, 2), axis=(1, 2))
+        X_transformed = self.pca.transform(X_scaled)
+        X_reconstructed = self.pca.inverse_transform(X_transformed)
+        mse = np.mean(np.power(X_scaled - X_reconstructed, 2), axis=1)
         
         # Set threshold as mean + std * multiplier
         self.reconstruction_error_threshold = np.mean(mse) + np.std(mse) * self.threshold_multiplier
@@ -153,14 +115,15 @@ class LSTMAutoencoder:
         if not self.is_fitted:
             raise ValueError("Model has not been fitted yet. Call fit() first.")
         
-        X_sequences, _ = self._preprocess(df, fit=False)
+        X_scaled, _ = self._preprocess(df, fit=False)
         
-        if len(X_sequences) == 0:
+        if len(X_scaled) == 0:
             return np.array([]), np.array([])
         
         # Calculate reconstruction error
-        reconstructions = self.model.predict(X_sequences)
-        mse = np.mean(np.power(X_sequences - reconstructions, 2), axis=(1, 2))
+        X_transformed = self.pca.transform(X_scaled)
+        X_reconstructed = self.pca.inverse_transform(X_transformed)
+        mse = np.mean(np.power(X_scaled - X_reconstructed, 2), axis=1)
         
         # Detect anomalies
         anomalies = np.where(mse > self.reconstruction_error_threshold, 1, 0)
@@ -169,13 +132,7 @@ class LSTMAutoencoder:
         scores = mse / (self.reconstruction_error_threshold * 2)
         scores = np.clip(scores, 0, 1)
         
-        # Extend predictions to match original data length
-        # (we lose timesteps-1 predictions at the beginning)
-        padding = np.zeros(self.timesteps - 1)
-        extended_anomalies = np.concatenate([padding, anomalies])
-        extended_scores = np.concatenate([padding, scores])
-        
-        return extended_anomalies, extended_scores
+        return anomalies, scores
 
 
 class AnomalyDetectionSystem:
@@ -184,17 +141,17 @@ class AnomalyDetectionSystem:
     def __init__(self):
         # Hardware metrics detectors
         self.hw_isolation_forest = IsolationForestDetector(contamination=0.05)
-        self.hw_lstm_autoencoder = LSTMAutoencoder(timesteps=10)
+        self.hw_pca_detector = PCADetector(n_components=0.95)
         
         # Media metrics detectors
         self.media_isolation_forest = IsolationForestDetector(contamination=0.05)
-        self.media_lstm_autoencoder = LSTMAutoencoder(timesteps=10)
+        self.media_pca_detector = PCADetector(n_components=0.95)
         
         # Tracking if models are fitted
         self.hw_if_fitted = False
-        self.hw_lstm_fitted = False
+        self.hw_pca_fitted = False
         self.media_if_fitted = False
-        self.media_lstm_fitted = False
+        self.media_pca_fitted = False
     
     def fit_models(self, hw_df, media_df):
         """Fit all models on historical data."""
@@ -210,11 +167,10 @@ class AnomalyDetectionSystem:
                 print(f"Error fitting hardware Isolation Forest: {e}")
             
             try:
-                if len(hw_df) >= min_data_points + 10:  # Need extra points for LSTM sequences
-                    self.hw_lstm_autoencoder.fit(hw_df, epochs=5)
-                    self.hw_lstm_fitted = True
+                self.hw_pca_detector.fit(hw_df)
+                self.hw_pca_fitted = True
             except Exception as e:
-                print(f"Error fitting hardware LSTM Autoencoder: {e}")
+                print(f"Error fitting hardware PCA Detector: {e}")
         
         if len(media_df) >= min_data_points:
             # Fit media metrics models
@@ -225,11 +181,10 @@ class AnomalyDetectionSystem:
                 print(f"Error fitting media Isolation Forest: {e}")
             
             try:
-                if len(media_df) >= min_data_points + 10:  # Need extra points for LSTM sequences
-                    self.media_lstm_autoencoder.fit(media_df, epochs=5)
-                    self.media_lstm_fitted = True
+                self.media_pca_detector.fit(media_df)
+                self.media_pca_fitted = True
             except Exception as e:
-                print(f"Error fitting media LSTM Autoencoder: {e}")
+                print(f"Error fitting media PCA Detector: {e}")
     
     def detect_anomalies(self, hw_df, media_df):
         """Detect anomalies in current data."""
@@ -251,17 +206,17 @@ class AnomalyDetectionSystem:
             except Exception as e:
                 print(f"Error detecting hardware anomalies with Isolation Forest: {e}")
         
-        if not results['hardware']['anomaly'] and self.hw_lstm_fitted and len(hw_df) >= self.hw_lstm_autoencoder.timesteps:
+        if not results['hardware']['anomaly'] and self.hw_pca_fitted and len(hw_df) > 0:
             try:
-                anomalies, scores = self.hw_lstm_autoencoder.predict(hw_df)
+                anomalies, scores = self.hw_pca_detector.predict(hw_df)
                 if len(anomalies) > 0 and anomalies[-1] == 1:
                     results['hardware'] = {
                         'anomaly': True,
                         'score': float(scores[-1]),
-                        'model': 'LSTMAutoencoder'
+                        'model': 'PCA'
                     }
             except Exception as e:
-                print(f"Error detecting hardware anomalies with LSTM Autoencoder: {e}")
+                print(f"Error detecting hardware anomalies with PCA: {e}")
         
         # Detect media anomalies
         if self.media_if_fitted and len(media_df) > 0:
@@ -276,16 +231,16 @@ class AnomalyDetectionSystem:
             except Exception as e:
                 print(f"Error detecting media anomalies with Isolation Forest: {e}")
         
-        if not results['media']['anomaly'] and self.media_lstm_fitted and len(media_df) >= self.media_lstm_autoencoder.timesteps:
+        if not results['media']['anomaly'] and self.media_pca_fitted and len(media_df) > 0:
             try:
-                anomalies, scores = self.media_lstm_autoencoder.predict(media_df)
+                anomalies, scores = self.media_pca_detector.predict(media_df)
                 if len(anomalies) > 0 and anomalies[-1] == 1:
                     results['media'] = {
                         'anomaly': True,
                         'score': float(scores[-1]),
-                        'model': 'LSTMAutoencoder'
+                        'model': 'PCA'
                     }
             except Exception as e:
-                print(f"Error detecting media anomalies with LSTM Autoencoder: {e}")
+                print(f"Error detecting media anomalies with PCA: {e}")
         
         return results
