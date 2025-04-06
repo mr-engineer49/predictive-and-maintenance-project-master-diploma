@@ -31,13 +31,25 @@ def system_health_indicators(anomaly_results):
     """Display system health indicators for different vehicle types."""
     st.subheader("System Health")
     
-    # Create a health indicator for each vehicle type
-    cols = st.columns(len(anomaly_results))
+    # Check if we have any results to display
+    if not anomaly_results or len(anomaly_results) == 0:
+        st.info("No vehicle data available yet. Collecting data...")
+        return
     
+    # Create a health indicator for each vehicle type - ensure at least 1 column
+    num_columns = len(anomaly_results) if len(anomaly_results) > 0 else 1
+    cols = st.columns(num_columns)
+    
+    # Display each vehicle's health status
     for i, (vehicle_type, result) in enumerate(anomaly_results.items()):
-        with cols[i]:
-            status = "Critical" if result['anomaly'] and result['score'] > 0.7 else \
-                     "Warning" if result['anomaly'] else "Normal"
+        with cols[i % num_columns]:  # Use modulo to handle any number of items safely
+            # Default status if any fields are missing
+            status = "Normal"
+            if result.get('anomaly', False):
+                if result.get('score', 0) > 0.7:
+                    status = "Critical"
+                else:
+                    status = "Warning"
             
             status_color = "#FF5630" if status == "Critical" else \
                           "#FFAB00" if status == "Warning" else "#36B37E"
@@ -49,8 +61,8 @@ def system_health_indicators(anomaly_results):
                 <div style='background-color: {status_color}30; padding: 10px; border-radius: 5px; border-left: 5px solid {status_color};'>
                     <h4 style='margin: 0; color: {status_color};'>{vehicle_name} Status: {status}</h4>
                     <p style='margin: 5px 0 0 0;'>
-                        {"Potential issue detected" if result['anomaly'] else "Operating normally"}
-                        {f" (Model: {result['model']})" if result['anomaly'] else ""}
+                        {"Potential issue detected" if result.get('anomaly', False) else "Operating normally"}
+                        {f" (Model: {result.get('model', 'Unknown')})" if result.get('anomaly', False) else ""}
                     </p>
                 </div>
                 """,
@@ -776,11 +788,11 @@ def system_efficiency(vehicle_data, anomaly_results, key_prefix=""):
             stability_scores.append(100 - min(100, (std_val / (mean_val + 0.001)) * 100))
         
         efficiency_score = sum(stability_scores) / len(stability_scores)
-        
-        # Generic recommendations
-        temp_rec = "Regular maintenance recommended to maintain system efficiency."
-        vibration_rec = "Monitor system for signs of increasing vibration or instability."
-        fuel_rec = "Optimize operational parameters based on historical performance."
+    
+    # Initialize default recommendations (to avoid unbound variable errors)
+    temp_rec = "Regular maintenance recommended to maintain system efficiency."
+    vibration_rec = "Monitor system for signs of increasing vibration or instability."
+    fuel_rec = "Optimize operational parameters based on historical performance."
     
     # Display efficiency gauge
     efficiency_color = "#36B37E" if efficiency_score > 80 else "#FFAB00" if efficiency_score > 60 else "#FF5630"
@@ -920,9 +932,17 @@ def create_dashboard():
         "System Optimization"
     ])
     
-    # Get data from session state
+    # Get data from session state with fallbacks for missing data
     vehicle_data = st.session_state.get('vehicle_data', {})
+    if not vehicle_data:
+        st.warning("No vehicle data available yet. Initializing data collection...")
+        
+    # Initialize anomaly_results if it doesn't exist
     anomaly_results = st.session_state.get('anomaly_results', {})
+    if not isinstance(anomaly_results, dict):
+        st.warning("Invalid anomaly results format. Resetting...")
+        anomaly_results = {}
+        
     alerts = st.session_state.get('alerts', [])
     
     # Tab 1: Real-time Monitoring
