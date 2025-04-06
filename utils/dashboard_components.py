@@ -504,7 +504,8 @@ def historical_analysis(hw_df, media_df):
     time_period = st.selectbox(
         "Select Time Period",
         ["Last 1 Hour", "Last 6 Hours", "Last 24 Hours", "Last 7 Days"],
-        index=0
+        index=0,
+        key="historical_time_period"
     )
     
     # Filter data based on selected time period

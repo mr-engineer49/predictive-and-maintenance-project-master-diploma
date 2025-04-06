@@ -82,27 +82,28 @@ with st.sidebar:
         min_value=1,
         max_value=10,
         value=3,
-        step=1
+        step=1,
+        key="update_frequency_slider"
     )
     
     # Alert thresholds
     st.subheader("Alert Thresholds")
     
-    cpu_threshold = st.slider("CPU Usage (%)", 70, 95, 80)
-    gpu_threshold = st.slider("GPU Usage (%)", 70, 95, 85)
-    memory_threshold = st.slider("Memory Usage (%)", 70, 95, 80)
+    cpu_threshold = st.slider("CPU Usage (%)", 70, 95, 80, key="cpu_threshold_slider")
+    gpu_threshold = st.slider("GPU Usage (%)", 70, 95, 85, key="gpu_threshold_slider")
+    memory_threshold = st.slider("Memory Usage (%)", 70, 95, 80, key="memory_threshold_slider")
     
-    frame_rate_threshold = st.slider("Min Frame Rate (FPS)", 10, 24, 20)
-    frame_drops_threshold = st.slider("Max Frame Drops (/min)", 2, 15, 5)
+    frame_rate_threshold = st.slider("Min Frame Rate (FPS)", 10, 24, 20, key="frame_rate_threshold_slider")
+    frame_drops_threshold = st.slider("Max Frame Drops (/min)", 2, 15, 5, key="frame_drops_threshold_slider")
     
     # System controls
     st.subheader("System Controls")
     
-    if st.button("Reset Alerts"):
+    if st.button("Reset Alerts", key="reset_alerts_button"):
         st.session_state.alerts = []
         st.success("Alerts cleared!")
     
-    if st.button("Retrain Anomaly Models"):
+    if st.button("Retrain Anomaly Models", key="retrain_models_button"):
         with st.spinner("Retraining models..."):
             # Get current data
             hw_df, media_df = st.session_state.metrics_collector.get_data()
