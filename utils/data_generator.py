@@ -1,241 +1,387 @@
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
-import time
+import random
+import json
 
-class HardwareMetricsGenerator:
-    """Generate simulated hardware metrics for a multimedia processing system."""
+class TransportationDataGenerator:
+    """Generate simulated sensor data for transportation vehicles (airplanes, trucks, railways)."""
     
-    def __init__(self, anomaly_probability=0.05):
+    def __init__(self, vehicle_type='airplane', anomaly_probability=0.05, random_seed=42):
+        """Initialize the data generator.
+        
+        Args:
+            vehicle_type (str): Type of vehicle ('airplane', 'truck', or 'railway')
+            anomaly_probability (float): Probability of introducing anomalies
+            random_seed (int): Random seed for reproducibility
+        """
+        self.vehicle_type = vehicle_type.lower()
         self.anomaly_probability = anomaly_probability
-        # Normal operating ranges
-        self.normal_ranges = {
-            'cpu_usage': (20, 60),       # percentage
-            'gpu_usage': (30, 70),       # percentage
-            'memory_usage': (30, 70),    # percentage
-            'disk_io': (5, 30),          # MB/s
-            'network_io': (10, 50),      # MB/s
-            'temperature': (40, 70)      # degrees Celsius
-        }
-        # Initialize trend values
-        self.trend_values = {metric: np.mean(range_val) for metric, range_val in self.normal_ranges.items()}
-        # Current state (normal or anomaly)
-        self.current_state = "normal"
-        # Counter for anomaly duration
-        self.anomaly_counter = 0
+        
+        # Set random seed for reproducibility
+        np.random.seed(random_seed)
+        random.seed(random_seed)
+        
+        # Define normal operating ranges for each vehicle type
+        self.normal_ranges = self._initialize_normal_ranges()
+        
+        # Initialize trends with random values within normal range
+        self.trends = self._initialize_trends()
+        
+        # Track which metrics have anomalies currently
+        self.active_anomalies = {}
     
-    def _introduce_anomaly(self, metric, value):
-        """Introduce an anomaly to the given metric value."""
-        if metric == 'cpu_usage':
-            return min(value * 2, 100)  # CPU spike
-        elif metric == 'gpu_usage':
-            return min(value * 1.8, 100)  # GPU spike
-        elif metric == 'memory_usage':
-            return min(value * 1.5, 100)  # Memory leak
-        elif metric == 'disk_io':
-            return value * 3  # Disk I/O surge
-        elif metric == 'network_io':
-            return value * 0.2  # Network throttling
-        elif metric == 'temperature':
-            return value * 1.3  # Overheating
-        return value
+    def _initialize_normal_ranges(self):
+        """Initialize normal operating ranges for each vehicle type."""
+        if self.vehicle_type == 'airplane':
+            return {
+                'engine_temperature': (320, 450),      # Celsius
+                'engine_vibration': (0.1, 0.8),        # g-force units
+                'fuel_pressure': (30, 40),             # PSI
+                'oil_pressure': (45, 60),              # PSI
+                'rotation_speed': (2000, 3500),        # RPM
+                'altitude': (0, 40000),                # feet
+                'airspeed': (150, 500),                # knots
+                'exhaust_gas_temp': (400, 600),        # Celsius
+                'hydraulic_pressure': (2800, 3200),    # PSI
+                'cabin_pressure': (11, 15)             # PSI
+            }
+        elif self.vehicle_type == 'truck':
+            return {
+                'engine_temperature': (80, 105),       # Celsius
+                'engine_vibration': (0.05, 0.4),       # g-force units
+                'fuel_pressure': (50, 65),             # PSI
+                'oil_pressure': (30, 45),              # PSI
+                'rotation_speed': (600, 2000),         # RPM
+                'tire_pressure': (100, 120),           # PSI
+                'brake_temperature': (50, 200),        # Celsius
+                'transmission_temp': (70, 95),         # Celsius
+                'battery_voltage': (12.5, 14.5),       # Volts
+                'coolant_level': (80, 100)             # Percentage
+            }
+        elif self.vehicle_type == 'railway':
+            return {
+                'engine_temperature': (60, 95),        # Celsius
+                'engine_vibration': (0.02, 0.3),       # g-force units
+                'hydraulic_pressure': (140, 180),      # Bar
+                'oil_pressure': (3, 6),                # Bar
+                'rotation_speed': (300, 1200),         # RPM
+                'axle_temperature': (20, 60),          # Celsius
+                'catenary_voltage': (24000, 27000),    # Volts
+                'pantograph_force': (60, 90),          # Newtons
+                'brake_cylinder_pressure': (3, 5),     # Bar
+                'traction_motor_temp': (50, 80)        # Celsius
+            }
+        else:
+            raise ValueError(f"Unsupported vehicle type: {self.vehicle_type}")
     
-    def _update_trend(self):
-        """Update the trend values with small random variations."""
-        for metric, range_val in self.normal_ranges.items():
-            min_val, max_val = range_val
-            current = self.trend_values[metric]
-            # Random walk
-            change = np.random.normal(0, (max_val - min_val) * 0.05)
-            new_val = current + change
-            # Ensure within range
-            new_val = max(min_val, min(new_val, max_val))
-            self.trend_values[metric] = new_val
+    def _initialize_trends(self):
+        """Initialize random starting points for each metric within normal range."""
+        trends = {}
+        for metric, (min_val, max_val) in self.normal_ranges.items():
+            # Start at a random point within the normal range
+            mid_point = (min_val + max_val) / 2
+            range_width = (max_val - min_val) * 0.3  # Start near the middle
+            trends[metric] = random.uniform(mid_point - range_width, mid_point + range_width)
+        return trends
+    
+    def _update_trend(self, metric, current_value, drift_factor=0.02):
+        """Update a metric value with small random variations.
+        
+        Args:
+            metric (str): Name of the metric to update
+            current_value (float): Current value of the metric
+            drift_factor (float): Maximum percentage change per update
+            
+        Returns:
+            float: Updated value with random drift
+        """
+        min_val, max_val = self.normal_ranges[metric]
+        range_size = max_val - min_val
+        
+        # Calculate maximum allowed drift
+        max_drift = range_size * drift_factor
+        
+        # Generate random drift
+        drift = random.uniform(-max_drift, max_drift)
+        
+        # Update value with drift
+        new_value = current_value + drift
+        
+        # Ensure value stays within a larger range (allowing for minor excursions)
+        extended_min = min_val - range_size * 0.1
+        extended_max = max_val + range_size * 0.1
+        
+        # Apply soft boundaries by adding resistance when approaching limits
+        if new_value < min_val:
+            # Pull back toward normal range when below minimum
+            pull_factor = (min_val - new_value) / (min_val - extended_min) * 0.7
+            new_value += (min_val - new_value) * pull_factor
+        elif new_value > max_val:
+            # Pull back toward normal range when above maximum
+            pull_factor = (new_value - max_val) / (extended_max - max_val) * 0.7
+            new_value -= (new_value - max_val) * pull_factor
+        
+        return new_value
+    
+    def _introduce_anomaly(self, metric, current_value):
+        """Introduce an anomaly to the given metric value.
+        
+        Args:
+            metric (str): Name of the metric
+            current_value (float): Current value of the metric
+            
+        Returns:
+            float: Value with anomaly introduced
+        """
+        min_val, max_val = self.normal_ranges[metric]
+        range_size = max_val - min_val
+        
+        # Different anomaly patterns based on metric type
+        if 'temperature' in metric or 'temp' in metric:
+            # Temperature metrics typically spike upward during failures
+            anomaly_value = current_value + range_size * random.uniform(0.15, 0.4)
+        elif 'pressure' in metric:
+            # Pressure can drop during leaks or spike during blockages
+            if random.random() < 0.7:  # 70% chance of pressure drop
+                anomaly_value = current_value - range_size * random.uniform(0.2, 0.5)
+            else:  # 30% chance of pressure spike
+                anomaly_value = current_value + range_size * random.uniform(0.15, 0.3)
+        elif 'vibration' in metric:
+            # Vibration typically increases with mechanical issues
+            anomaly_value = current_value + range_size * random.uniform(0.3, 0.8)
+        elif 'speed' in metric or 'rpm' in metric:
+            # Rotation speed might fluctuate unusually
+            deviation = range_size * random.uniform(0.1, 0.25)
+            anomaly_value = current_value + deviation * (-1 if random.random() < 0.5 else 1)
+        elif 'voltage' in metric:
+            # Voltage drops are common electrical issues
+            anomaly_value = current_value - range_size * random.uniform(0.15, 0.4)
+        else:
+            # Generic anomaly for other metrics
+            deviation = range_size * random.uniform(0.15, 0.4)
+            anomaly_value = current_value + deviation * (-1 if random.random() < 0.5 else 1)
+        
+        return anomaly_value
+    
+    def _should_start_anomaly(self):
+        """Determine if a new anomaly should be started."""
+        return random.random() < self.anomaly_probability
+    
+    def _should_continue_anomaly(self, duration_steps):
+        """Determine if an existing anomaly should continue.
+        
+        Args:
+            duration_steps (int): How many steps the anomaly has been active
+            
+        Returns:
+            bool: Whether to continue the anomaly
+        """
+        # Most anomalies last 3-7 steps before resolving
+        if duration_steps > random.randint(3, 7):
+            return False
+        return True
     
     def generate_metrics(self):
-        """Generate the current set of hardware metrics."""
-        # Decide if we should transition to/from anomaly state
-        if self.current_state == "normal" and np.random.random() < self.anomaly_probability:
-            self.current_state = "anomaly"
-            self.anomaly_counter = np.random.randint(5, 15)  # Anomaly lasts for 5-15 data points
+        """Generate a new set of metrics data.
         
-        if self.current_state == "anomaly":
-            self.anomaly_counter -= 1
-            if self.anomaly_counter <= 0:
-                self.current_state = "normal"
-        
-        # Update trend values
-        self._update_trend()
-        
-        # Generate current metrics
+        Returns:
+            dict: Dictionary of metrics with values
+        """
         metrics = {}
-        for metric, trend_value in self.trend_values.items():
-            # Add noise
-            noise = np.random.normal(0, (self.normal_ranges[metric][1] - self.normal_ranges[metric][0]) * 0.1)
-            value = trend_value + noise
-            
-            # Apply anomaly if in anomaly state
-            if self.current_state == "anomaly":
-                value = self._introduce_anomaly(metric, value)
-            
-            metrics[metric] = max(0, value)  # Ensure non-negative
+        anomaly_present = False
+        anomaly_metrics = []
         
+        # Update each metric
+        for metric in self.normal_ranges.keys():
+            current_value = self.trends[metric]
+            
+            # Check if this metric already has an active anomaly
+            if metric in self.active_anomalies:
+                # Increment anomaly duration
+                self.active_anomalies[metric] += 1
+                
+                # Decide whether to continue the anomaly
+                if self._should_continue_anomaly(self.active_anomalies[metric]):
+                    # Continue anomaly
+                    new_value = self._introduce_anomaly(metric, current_value)
+                    anomaly_present = True
+                    anomaly_metrics.append(metric)
+                else:
+                    # End anomaly
+                    new_value = self._update_trend(metric, current_value)
+                    del self.active_anomalies[metric]
+            else:
+                # No active anomaly for this metric
+                if self._should_start_anomaly():
+                    # Start new anomaly
+                    new_value = self._introduce_anomaly(metric, current_value)
+                    self.active_anomalies[metric] = 1
+                    anomaly_present = True
+                    anomaly_metrics.append(metric)
+                else:
+                    # Normal update
+                    new_value = self._update_trend(metric, current_value)
+            
+            # Update trend and add to metrics
+            self.trends[metric] = new_value
+            metrics[metric] = round(new_value, 2)
+        
+        # Add metadata
         metrics['timestamp'] = datetime.now()
-        metrics['is_anomaly'] = 1 if self.current_state == "anomaly" else 0
+        metrics['vehicle_type'] = self.vehicle_type
+        metrics['vehicle_id'] = f"{self.vehicle_type}_01"  # Add ID for tracking multiple vehicles
+        metrics['is_anomaly'] = int(anomaly_present)
+        metrics['anomaly_metrics'] = anomaly_metrics if anomaly_present else []
         
         return metrics
-
-
-class MediaMetricsGenerator:
-    """Generate simulated media processing metrics."""
     
-    def __init__(self, anomaly_probability=0.05):
-        self.anomaly_probability = anomaly_probability
-        # Normal operating ranges
-        self.normal_ranges = {
-            'frame_rate': (25, 30),         # FPS
-            'bitrate': (5000, 10000),       # Kbps
-            'encoding_time': (10, 30),      # ms per frame
-            'frame_drops': (0, 2),          # count per minute
-            'audio_sync_offset': (-5, 5),   # ms
-            'compression_ratio': (0.6, 0.8) # ratio
-        }
-        # Initialize trend values
-        self.trend_values = {metric: np.mean(range_val) for metric, range_val in self.normal_ranges.items()}
-        # Current state (normal or anomaly)
-        self.current_state = "normal"
-        # Counter for anomaly duration
-        self.anomaly_counter = 0
-    
-    def _introduce_anomaly(self, metric, value):
-        """Introduce an anomaly to the given metric value."""
-        if metric == 'frame_rate':
-            return max(value * 0.5, 1)  # Frame rate drop
-        elif metric == 'bitrate':
-            return value * 0.4  # Bitrate drop
-        elif metric == 'encoding_time':
-            return value * 3  # Slow encoding
-        elif metric == 'frame_drops':
-            return value + 15  # Frame drops
-        elif metric == 'audio_sync_offset':
-            return value + 100 if value >= 0 else value - 100  # Audio sync issues
-        elif metric == 'compression_ratio':
-            return max(value * 1.5, 1)  # Compression issues
-        return value
-    
-    def _update_trend(self):
-        """Update the trend values with small random variations."""
-        for metric, range_val in self.normal_ranges.items():
-            min_val, max_val = range_val
-            current = self.trend_values[metric]
-            # Random walk
-            change = np.random.normal(0, (max_val - min_val) * 0.05)
-            new_val = current + change
-            # Ensure within range
-            new_val = max(min_val, min(new_val, max_val))
-            self.trend_values[metric] = new_val
-    
-    def generate_metrics(self):
-        """Generate the current set of media metrics."""
-        # Decide if we should transition to/from anomaly state
-        if self.current_state == "normal" and np.random.random() < self.anomaly_probability:
-            self.current_state = "anomaly"
-            self.anomaly_counter = np.random.randint(5, 15)  # Anomaly lasts for 5-15 data points
+    def generate_kafka_message(self):
+        """Generate a message for Kafka in JSON format.
         
-        if self.current_state == "anomaly":
-            self.anomaly_counter -= 1
-            if self.anomaly_counter <= 0:
-                self.current_state = "normal"
+        Returns:
+            str: JSON string with metrics data
+        """
+        metrics = self.generate_metrics()
         
-        # Update trend values
-        self._update_trend()
+        # Convert timestamp to string for JSON serialization
+        metrics['timestamp'] = metrics['timestamp'].isoformat()
         
-        # Generate current metrics
-        metrics = {}
-        for metric, trend_value in self.trend_values.items():
-            # Add noise
-            noise = np.random.normal(0, (self.normal_ranges[metric][1] - self.normal_ranges[metric][0]) * 0.1)
-            value = trend_value + noise
+        return json.dumps(metrics)
+    
+    def generate_batch(self, n_samples, time_delta=None):
+        """Generate a batch of consecutive samples.
+        
+        Args:
+            n_samples (int): Number of samples to generate
+            time_delta (timedelta, optional): Time between samples
             
-            # Apply anomaly if in anomaly state
-            if self.current_state == "anomaly":
-                value = self._introduce_anomaly(metric, value)
+        Returns:
+            pd.DataFrame: DataFrame with generated samples
+        """
+        samples = []
+        
+        # Reset active anomalies for a clean slate
+        self.active_anomalies = {}
+        
+        for i in range(n_samples):
+            metrics = self.generate_metrics()
+            samples.append(metrics)
             
-            metrics[metric] = max(0, value) if metric != 'audio_sync_offset' else value
+            # Adjust timestamp for sequential data if time_delta provided
+            if time_delta and i < n_samples - 1:
+                # Use fixed timestamps for historical data
+                next_time = metrics['timestamp'] + time_delta
+                # Temporarily modify current time for the next sample
+                metrics['timestamp'] = next_time
         
-        metrics['timestamp'] = datetime.now()
-        metrics['is_anomaly'] = 1 if self.current_state == "anomaly" else 0
-        
-        return metrics
+        return pd.DataFrame(samples)
 
 
-def get_historical_data(days=7, interval_minutes=15):
-    """Generate historical hardware and media metrics data."""
-    hw_gen = HardwareMetricsGenerator(anomaly_probability=0.02)
-    media_gen = MediaMetricsGenerator(anomaly_probability=0.02)
+def get_historical_data(days=7, interval_minutes=15, vehicle_type='airplane'):
+    """Generate historical data for training and testing.
     
-    # Calculate number of data points
-    points = int((days * 24 * 60) / interval_minutes)
+    Args:
+        days (int): Number of days of historical data
+        interval_minutes (int): Interval between data points in minutes
+        vehicle_type (str): Type of vehicle to generate data for
+        
+    Returns:
+        pd.DataFrame: DataFrame with historical data
+    """
+    # Calculate number of samples
+    n_samples = int((days * 24 * 60) / interval_minutes)
     
-    # Create timestamp range
+    # Create data generator with low anomaly probability for historical data
+    generator = TransportationDataGenerator(
+        vehicle_type=vehicle_type,
+        anomaly_probability=0.02
+    )
+    
+    # Generate batch with time intervals
     end_time = datetime.now()
     start_time = end_time - timedelta(days=days)
-    timestamps = [start_time + timedelta(minutes=i*interval_minutes) for i in range(points)]
     
-    hw_data = []
-    media_data = []
+    # Create a range of timestamps
+    timestamps = [start_time + timedelta(minutes=i*interval_minutes) for i in range(n_samples)]
     
-    for ts in timestamps:
-        # Generate hardware metrics
-        hw_metrics = hw_gen.generate_metrics()
-        hw_metrics['timestamp'] = ts
-        hw_data.append(hw_metrics)
-        
-        # Generate media metrics
-        media_metrics = media_gen.generate_metrics()
-        media_metrics['timestamp'] = ts
-        media_data.append(media_metrics)
+    # Generate data
+    data = generator.generate_batch(n_samples, timedelta(minutes=interval_minutes))
     
-    hw_df = pd.DataFrame(hw_data)
-    media_df = pd.DataFrame(media_data)
+    # Ensure timestamps are in sequence
+    data['timestamp'] = timestamps
     
-    return hw_df, media_df
+    return data
 
 
 class MetricsCollector:
     """Collects and stores metrics from generators in real-time."""
     
-    def __init__(self, max_points=100):
+    def __init__(self, vehicle_types=['airplane', 'truck', 'railway'], max_points=1000):
+        """Initialize metrics collectors for different vehicle types.
+        
+        Args:
+            vehicle_types (list): List of vehicle types to collect metrics for
+            max_points (int): Maximum number of data points to store per vehicle type
+        """
         self.max_points = max_points
-        self.hw_gen = HardwareMetricsGenerator()
-        self.media_gen = MediaMetricsGenerator()
+        self.generators = {}
+        self.data = {}
         
-        # Initialize empty dataframes for real-time data
-        self.hw_data = pd.DataFrame()
-        self.media_data = pd.DataFrame()
+        # Initialize generators and data storage for each vehicle type
+        for vehicle_type in vehicle_types:
+            self.generators[vehicle_type] = TransportationDataGenerator(vehicle_type=vehicle_type)
+            self.data[vehicle_type] = pd.DataFrame()
     
-    def update(self):
-        """Update metrics with new data points."""
-        # Generate new data points
-        hw_metrics = self.hw_gen.generate_metrics()
-        media_metrics = self.media_gen.generate_metrics()
+    def update(self, vehicle_type=None):
+        """Update metrics with new data points.
         
-        # Convert to dataframes
-        hw_df = pd.DataFrame([hw_metrics])
-        media_df = pd.DataFrame([media_metrics])
+        Args:
+            vehicle_type (str, optional): Specific vehicle type to update, or all if None
+            
+        Returns:
+            dict: Dictionary with the latest metrics for each vehicle type
+        """
+        latest_metrics = {}
         
-        # Append to existing data
-        self.hw_data = pd.concat([self.hw_data, hw_df])
-        self.media_data = pd.concat([self.media_data, media_df])
+        # Update specified vehicle type or all vehicle types
+        types_to_update = [vehicle_type] if vehicle_type else self.generators.keys()
         
-        # Trim to max_points
-        if len(self.hw_data) > self.max_points:
-            self.hw_data = self.hw_data.iloc[-self.max_points:]
-        if len(self.media_data) > self.max_points:
-            self.media_data = self.media_data.iloc[-self.max_points:]
+        for vtype in types_to_update:
+            if vtype not in self.generators:
+                continue
+                
+            # Generate new metrics
+            metrics = self.generators[vtype].generate_metrics()
+            latest_metrics[vtype] = metrics
+            
+            # Convert to DataFrame row
+            metrics_df = pd.DataFrame([metrics])
+            
+            # Append to stored data
+            if self.data[vtype].empty:
+                self.data[vtype] = metrics_df
+            else:
+                self.data[vtype] = pd.concat([self.data[vtype], metrics_df], ignore_index=True)
+            
+            # Maintain maximum size
+            if len(self.data[vtype]) > self.max_points:
+                self.data[vtype] = self.data[vtype].iloc[-self.max_points:]
         
-        return hw_df.iloc[0].to_dict(), media_df.iloc[0].to_dict()
+        return latest_metrics
     
-    def get_data(self):
-        """Get the current data."""
-        return self.hw_data, self.media_data
+    def get_data(self, vehicle_type=None):
+        """Get the current data for the specified vehicle type(s).
+        
+        Args:
+            vehicle_type (str, optional): Vehicle type to get data for, or all if None
+            
+        Returns:
+            dict: Dictionary with DataFrames for each vehicle type
+        """
+        if vehicle_type:
+            if vehicle_type in self.data:
+                return {vehicle_type: self.data[vehicle_type]}
+            return {}
+        
+        return self.data

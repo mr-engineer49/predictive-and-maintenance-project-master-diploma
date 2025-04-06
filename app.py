@@ -2,55 +2,74 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import time
-import plotly.graph_objects as go
-import plotly.express as px
+import json
+import threading
 from datetime import datetime, timedelta
 
-# Import utilities
-from utils.data_generator import (
-    HardwareMetricsGenerator, 
-    MediaMetricsGenerator,
-    MetricsCollector,
-    get_historical_data
-)
-from utils.anomaly_detection import AnomalyDetectionSystem
-from utils.dashboard_components import (
-    header_section,
-    system_health_indicators,
-    metrics_cards,
-    real_time_charts,
-    anomaly_visualization,
-    alert_system,
-    maintenance_recommendations,
-    historical_analysis
-)
-from utils.optimization_components import (
-    system_optimization,
-    export_report,
-    resource_efficiency_metrics
-)
+# Import custom modules
+from utils.data_generator import TransportationDataGenerator, MetricsCollector, get_historical_data
+from models.anomaly_detection_system import AnomalyDetectionSystem
+from utils.dashboard_components import create_dashboard
+from api.flask_api import app as flask_app, alerts, vehicle_data, anomaly_results
 
 # Set page configuration
 st.set_page_config(
-    page_title="Media Processing Predictive Maintenance",
-    page_icon="🖥️",
+    page_title="Transportation Predictive Maintenance",
+    page_icon="🚗",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Initialize Flask API in a separate thread
+def start_flask_api():
+    from api.flask_api import start_api_server
+    start_api_server(port=5001)
+
+# Initialize Kafka producer simulator in a separate thread (for demo)
+def start_kafka_producer():
+    from api.kafka_consumer import KafkaLogProducer
+    producer = KafkaLogProducer(
+        bootstrap_servers=['localhost:9092'],
+        topic='vehicle_metrics',
+        simulation_interval=3
+    )
+    producer.start()
 
 # Initialize session state
 if 'initialized' not in st.session_state:
     st.session_state.initialized = True
     st.session_state.dark_mode = False
-    st.session_state.metrics_collector = MetricsCollector(max_points=1000)
-    st.session_state.anomaly_detector = AnomalyDetectionSystem()
-    st.session_state.alerts = []
-    st.session_state.historical_hw_df, st.session_state.historical_media_df = get_historical_data(days=7)
-    # Initialize the anomaly detector with historical data
-    st.session_state.anomaly_detector.fit_models(
-        st.session_state.historical_hw_df,
-        st.session_state.historical_media_df
+    
+    # Initialize data collectors and models
+    st.session_state.metrics_collector = MetricsCollector(
+        vehicle_types=['airplane', 'truck', 'railway'],
+        max_points=1000
     )
+    st.session_state.anomaly_detector = AnomalyDetectionSystem()
+    
+    # Initialize alerts list
+    st.session_state.alerts = []
+    
+    # Generate some historical data for each vehicle type
+    st.session_state.historical_data = {
+        'airplane': get_historical_data(days=7, vehicle_type='airplane'),
+        'truck': get_historical_data(days=7, vehicle_type='truck'),
+        'railway': get_historical_data(days=7, vehicle_type='railway')
+    }
+    
+    # Initialize the anomaly detector with historical data
+    st.session_state.anomaly_detector.fit_models(st.session_state.historical_data)
+    
+    # Start Flask API in a separate thread
+    flask_thread = threading.Thread(target=start_flask_api)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    # Start Kafka producer simulator (optional, for demo only)
+    # In a real deployment, this would be replaced with a real Kafka consumer
+    kafka_thread = threading.Thread(target=start_kafka_producer)
+    kafka_thread.daemon = True
+    kafka_thread.start()
 
 # Apply dark mode if enabled
 if st.session_state.get('dark_mode', False):
@@ -74,9 +93,6 @@ else:
     </style>
     """, unsafe_allow_html=True)
 
-# Display header
-header_section()
-
 # Sidebar configuration
 with st.sidebar:
     st.header("Control Panel")
@@ -91,199 +107,130 @@ with st.sidebar:
         key="update_frequency_slider"
     )
     
+    # Vehicle type filter
+    st.subheader("Vehicle Types")
+    vehicle_filter = {}
+    for vehicle_type in ['airplane', 'truck', 'railway']:
+        vehicle_filter[vehicle_type] = st.checkbox(
+            vehicle_type.capitalize(),
+            value=True,
+            key=f"vehicle_filter_{vehicle_type}"
+        )
+    
     # Alert thresholds
     st.subheader("Alert Thresholds")
     
-    cpu_threshold = st.slider("CPU Usage (%)", 70, 95, 80, key="cpu_threshold_slider")
-    gpu_threshold = st.slider("GPU Usage (%)", 70, 95, 85, key="gpu_threshold_slider")
-    memory_threshold = st.slider("Memory Usage (%)", 70, 95, 80, key="memory_threshold_slider")
-    
-    frame_rate_threshold = st.slider("Min Frame Rate (FPS)", 10, 24, 20, key="frame_rate_threshold_slider")
-    frame_drops_threshold = st.slider("Max Frame Drops (/min)", 2, 15, 5, key="frame_drops_threshold_slider")
+    anomaly_score_threshold = st.slider(
+        "Anomaly Score Threshold",
+        min_value=0.1,
+        max_value=0.9,
+        value=0.6,
+        step=0.1,
+        key="anomaly_threshold_slider"
+    )
     
     # System controls
     st.subheader("System Controls")
     
     if st.button("Reset Alerts", key="reset_alerts_button"):
         st.session_state.alerts = []
+        # Also clear the API alerts
+        alerts.clear()
         st.success("Alerts cleared!")
     
     if st.button("Retrain Anomaly Models", key="retrain_models_button"):
         with st.spinner("Retraining models..."):
             # Get current data
-            hw_df, media_df = st.session_state.metrics_collector.get_data()
+            vehicle_data_for_training = st.session_state.metrics_collector.get_data()
             
             # Make sure we have enough data
-            if len(hw_df) > 50 and len(media_df) > 50:
-                st.session_state.anomaly_detector.fit_models(hw_df, media_df)
+            has_enough_data = all(len(df) > 50 for df in vehicle_data_for_training.values())
+            
+            if has_enough_data:
+                st.session_state.anomaly_detector.fit_models(vehicle_data_for_training)
                 st.success("Models retrained successfully!")
             else:
                 st.error("Not enough data to retrain models. Continue collecting more data.")
 
-# Main dashboard layout
-# Create tabs for different views
-tab1, tab2, tab3, tab4 = st.tabs([
-    "Real-time Monitoring", 
-    "Anomaly Detection", 
-    "Historical Analysis", 
-    "System Optimization"
-])
-
-# Update function to refresh data
+# Main loop for real-time updates
 def update_data():
-    # Generate new data point
-    hw_metrics, media_metrics = st.session_state.metrics_collector.update()
+    """Update data and detect anomalies."""
+    # Update metrics for filtered vehicle types
+    filtered_vehicle_types = [vtype for vtype, enabled in vehicle_filter.items() if enabled]
+    latest_metrics = {}
+    
+    for vehicle_type in filtered_vehicle_types:
+        metrics = st.session_state.metrics_collector.update(vehicle_type)
+        latest_metrics.update(metrics)
     
     # Get full datasets
-    hw_df, media_df = st.session_state.metrics_collector.get_data()
+    vehicle_data_local = st.session_state.metrics_collector.get_data()
     
-    # Check for anomalies
-    anomaly_results = st.session_state.anomaly_detector.detect_anomalies(hw_df, media_df)
+    # Filter data based on selected vehicle types
+    filtered_data = {vtype: data for vtype, data in vehicle_data_local.items() if vtype in filtered_vehicle_types}
     
-    # Check for threshold breaches and create alerts
-    current_time = datetime.now().strftime("%H:%M:%S")
-    
-    # Check hardware thresholds
-    if hw_metrics['cpu_usage'] > cpu_threshold:
-        st.session_state.alerts.insert(0, {
-            'title': "High CPU Usage Alert",
-            'message': f"CPU usage is at {hw_metrics['cpu_usage']:.1f}%, which exceeds the threshold of {cpu_threshold}%",
-            'severity': "Warning" if hw_metrics['cpu_usage'] < 90 else "Critical",
-            'time': current_time
-        })
-    
-    if hw_metrics['gpu_usage'] > gpu_threshold:
-        st.session_state.alerts.insert(0, {
-            'title': "High GPU Usage Alert",
-            'message': f"GPU usage is at {hw_metrics['gpu_usage']:.1f}%, which exceeds the threshold of {gpu_threshold}%",
-            'severity': "Warning" if hw_metrics['gpu_usage'] < 90 else "Critical",
-            'time': current_time
-        })
-    
-    if hw_metrics['memory_usage'] > memory_threshold:
-        st.session_state.alerts.insert(0, {
-            'title': "High Memory Usage Alert",
-            'message': f"Memory usage is at {hw_metrics['memory_usage']:.1f}%, which exceeds the threshold of {memory_threshold}%",
-            'severity': "Warning" if hw_metrics['memory_usage'] < 90 else "Critical",
-            'time': current_time
-        })
-    
-    # Check media thresholds
-    if media_metrics['frame_rate'] < frame_rate_threshold:
-        st.session_state.alerts.insert(0, {
-            'title': "Low Frame Rate Alert",
-            'message': f"Frame rate is at {media_metrics['frame_rate']:.1f} FPS, which is below the threshold of {frame_rate_threshold} FPS",
-            'severity': "Warning" if media_metrics['frame_rate'] > frame_rate_threshold * 0.7 else "Critical",
-            'time': current_time
-        })
-    
-    if media_metrics['frame_drops'] > frame_drops_threshold:
-        st.session_state.alerts.insert(0, {
-            'title': "High Frame Drop Alert",
-            'message': f"Frame drops are at {media_metrics['frame_drops']:.1f} per minute, which exceeds the threshold of {frame_drops_threshold}",
-            'severity': "Warning" if media_metrics['frame_drops'] < frame_drops_threshold * 1.5 else "Critical",
-            'time': current_time
-        })
+    # Detect anomalies
+    anomaly_results_local = st.session_state.anomaly_detector.detect_anomalies(filtered_data)
     
     # Create alerts for anomalies if detected
-    if anomaly_results['hardware']['anomaly']:
-        st.session_state.alerts.insert(0, {
-            'title': "Hardware Anomaly Detected",
-            'message': f"Unusual hardware behavior detected by {anomaly_results['hardware']['model']} model with confidence score {anomaly_results['hardware']['score']:.2f}",
-            'severity': "Warning" if anomaly_results['hardware']['score'] < 0.7 else "Critical",
-            'time': current_time
-        })
+    current_time = datetime.now().isoformat()
     
-    if anomaly_results['media']['anomaly']:
-        st.session_state.alerts.insert(0, {
-            'title': "Media Processing Anomaly Detected",
-            'message': f"Unusual media processing behavior detected by {anomaly_results['media']['model']} model with confidence score {anomaly_results['media']['score']:.2f}",
-            'severity': "Warning" if anomaly_results['media']['score'] < 0.7 else "Critical",
-            'time': current_time
-        })
-    
-    # Limit alerts to 20 most recent
-    st.session_state.alerts = st.session_state.alerts[:20]
-    
-    return hw_metrics, media_metrics, hw_df, media_df, anomaly_results
-
-# Real-time Monitoring tab
-with tab1:
-    # Create placeholders for real-time updates
-    system_health_placeholder = st.empty()
-    metrics_cards_placeholder = st.empty()
-    charts_placeholder = st.empty()
-    alerts_placeholder = st.empty()
-
-# Anomaly Detection tab
-with tab2:
-    # Create placeholders for anomaly detection
-    anomaly_viz_placeholder = st.empty()
-    recommendations_placeholder = st.empty()
-
-# Historical Analysis tab
-with tab3:
-    # Create placeholder for historical analysis
-    historical_placeholder = st.empty()
-
-# System Optimization tab
-with tab4:
-    # Create placeholders for optimization components
-    system_opt_placeholder = st.empty()
-    export_report_placeholder = st.empty()
-    resource_metrics_placeholder = st.empty()
-
-# Main loop for real-time updates
-while True:
-    # Update data
-    hw_metrics, media_metrics, hw_df, media_df, anomaly_results = update_data()
-    
-    # Update Real-time Monitoring tab
-    with tab1:
-        with system_health_placeholder.container():
-            system_health_indicators(
-                anomaly_results['hardware'], 
-                anomaly_results['media']
-            )
-        
-        with metrics_cards_placeholder.container():
-            metrics_cards(hw_metrics, media_metrics)
-        
-        with charts_placeholder.container():
-            real_time_charts(hw_df, media_df)
-        
-        with alerts_placeholder.container():
-            alert_system(st.session_state.alerts)
-    
-    # Update Anomaly Detection tab
-    with tab2:
-        with anomaly_viz_placeholder.container():
-            anomaly_visualization(hw_df, media_df)
-        
-        with recommendations_placeholder.container():
-            maintenance_recommendations(
-                anomaly_results['hardware'], 
-                anomaly_results['media']
-            )
-    
-    # Update Historical Analysis tab
-    # Using a unique key prefix for each tab to avoid duplicate keys
-    with tab3:
-        with historical_placeholder.container():
-            # We'll pass a key_prefix to ensure all widgets have unique keys
-            historical_analysis(hw_df, media_df, key_prefix="tab3_")
-    
-    # Update System Optimization tab
-    # Using a unique key prefix for each tab to avoid duplicate keys
-    with tab4:
-        with system_opt_placeholder.container():
-            system_optimization(hw_df, media_df, key_prefix="tab4_opt_")
+    for vehicle_type, result in anomaly_results_local.items():
+        if result['anomaly']:
+            # Get the metrics that are anomalous
+            anomaly_metrics = result.get('anomaly_metrics', [])
+            metrics_str = ', '.join(anomaly_metrics) if anomaly_metrics else "multiple metrics"
             
-        with export_report_placeholder.container():
-            export_report(hw_df, media_df, anomaly_results, key_prefix="tab4_export_")
+            # Create alert
+            alert = {
+                'title': f"Anomaly Detected in {vehicle_type.capitalize()}",
+                'message': f"Unusual behavior detected in {metrics_str} with confidence score {result['score']:.2f}",
+                'severity': "Critical" if result['score'] > anomaly_score_threshold else "Warning",
+                'timestamp': current_time,
+                'vehicle_type': vehicle_type,
+                'vehicle_id': f"{vehicle_type}_01",
+                'metrics': anomaly_metrics
+            }
             
-        with resource_metrics_placeholder.container():
-            resource_efficiency_metrics(hw_df, media_df, key_prefix="tab4_metrics_")
+            # Add to session state
+            st.session_state.alerts.insert(0, alert)
+            
+            # Limit alerts to 20 most recent
+            st.session_state.alerts = st.session_state.alerts[:20]
+            
+            # Also update the API alerts
+            alerts.insert(0, alert)
+            alerts[:] = alerts[:100]  # Keep only 100 most recent
     
-    # Wait before next update
-    time.sleep(update_frequency)
+    # Update API data
+    global vehicle_data, anomaly_results
+    vehicle_data.update(filtered_data)
+    anomaly_results.update(anomaly_results_local)
+    
+    return filtered_data, anomaly_results_local
+
+# Create the dashboard with placeholders for updates
+create_dashboard()
+
+# Create a container for status
+status_container = st.empty()
+
+# Main update loop
+try:
+    while True:
+        # Update data
+        start_time = time.time()
+        st.session_state.vehicle_data, st.session_state.anomaly_results = update_data()
+        
+        # Display status
+        with status_container.container():
+            end_time = time.time()
+            st.text(f"Last update: {datetime.now().strftime('%H:%M:%S')} (took {(end_time - start_time):.2f}s)")
+        
+        # Wait before next update
+        time.sleep(update_frequency)
+        
+        # Force rerun to update the dashboard
+        st.rerun()
+except Exception as e:
+    st.error(f"An error occurred: {str(e)}")
