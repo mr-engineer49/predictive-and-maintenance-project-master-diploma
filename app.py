@@ -24,6 +24,11 @@ from utils.dashboard_components import (
     maintenance_recommendations,
     historical_analysis
 )
+from utils.optimization_components import (
+    system_optimization,
+    export_report,
+    resource_efficiency_metrics
+)
 
 # Set page configuration
 st.set_page_config(
@@ -117,7 +122,12 @@ with st.sidebar:
 
 # Main dashboard layout
 # Create tabs for different views
-tab1, tab2, tab3 = st.tabs(["Real-time Monitoring", "Anomaly Detection", "Historical Analysis"])
+tab1, tab2, tab3, tab4 = st.tabs([
+    "Real-time Monitoring", 
+    "Anomaly Detection", 
+    "Historical Analysis", 
+    "System Optimization"
+])
 
 # Update function to refresh data
 def update_data():
@@ -216,6 +226,13 @@ with tab3:
     # Create placeholder for historical analysis
     historical_placeholder = st.empty()
 
+# System Optimization tab
+with tab4:
+    # Create placeholders for optimization components
+    system_opt_placeholder = st.empty()
+    export_report_placeholder = st.empty()
+    resource_metrics_placeholder = st.empty()
+
 # Main loop for real-time updates
 while True:
     # Update data
@@ -250,9 +267,23 @@ while True:
             )
     
     # Update Historical Analysis tab
+    # Using a unique key prefix for each tab to avoid duplicate keys
     with tab3:
         with historical_placeholder.container():
-            historical_analysis(hw_df, media_df)
+            # We'll pass a key_prefix to ensure all widgets have unique keys
+            historical_analysis(hw_df, media_df, key_prefix="tab3_")
+    
+    # Update System Optimization tab
+    # Using a unique key prefix for each tab to avoid duplicate keys
+    with tab4:
+        with system_opt_placeholder.container():
+            system_optimization(hw_df, media_df, key_prefix="tab4_opt_")
+            
+        with export_report_placeholder.container():
+            export_report(hw_df, media_df, anomaly_results, key_prefix="tab4_export_")
+            
+        with resource_metrics_placeholder.container():
+            resource_efficiency_metrics(hw_df, media_df, key_prefix="tab4_metrics_")
     
     # Wait before next update
     time.sleep(update_frequency)

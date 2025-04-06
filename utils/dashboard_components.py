@@ -3,6 +3,8 @@ import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
 import numpy as np
+import base64
+import io
 from datetime import datetime, timedelta
 
 def header_section():
@@ -492,7 +494,7 @@ def maintenance_recommendations(hw_anomaly, media_anomaly):
         for item in rec['recommendations']:
             st.markdown(f"- {item}")
 
-def historical_analysis(hw_df, media_df):
+def historical_analysis(hw_df, media_df, key_prefix=""):
     """Display historical analysis of system performance."""
     st.subheader("Historical Performance Analysis")
     
@@ -505,7 +507,7 @@ def historical_analysis(hw_df, media_df):
         "Select Time Period",
         ["Last 1 Hour", "Last 6 Hours", "Last 24 Hours", "Last 7 Days"],
         index=0,
-        key="historical_time_period"
+        key=f"{key_prefix}historical_time_period"
     )
     
     # Filter data based on selected time period
