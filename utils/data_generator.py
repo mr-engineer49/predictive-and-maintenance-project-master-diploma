@@ -385,3 +385,55 @@ class MetricsCollector:
             return {}
         
         return self.data
+        
+    def get_data_for_vehicle(self, vehicle_type):
+        """Get data for a specific vehicle type.
+        
+        Args:
+            vehicle_type (str): Vehicle type to get data for
+            
+        Returns:
+            pd.DataFrame: DataFrame with data for the vehicle type
+        """
+        if vehicle_type in self.data:
+            return self.data[vehicle_type]
+        return pd.DataFrame()
+        
+    def add_external_data(self, vehicle_type, df):
+        """Add external data to the existing data.
+        
+        Args:
+            vehicle_type (str): Vehicle type to add data for
+            df (pd.DataFrame): DataFrame with data to add
+            
+        Returns:
+            None
+        """
+        if vehicle_type not in self.data:
+            self.data[vehicle_type] = df
+            return
+            
+        # Make sure timestamps are datetime objects
+        if 'timestamp' in df.columns and 'timestamp' in self.data[vehicle_type].columns:
+            if not pd.api.types.is_datetime64_any_dtype(df['timestamp']):
+                try:
+                    df['timestamp'] = pd.to_datetime(df['timestamp'])
+                except:
+                    pass
+                    
+            if not pd.api.types.is_datetime64_any_dtype(self.data[vehicle_type]['timestamp']):
+                try:
+                    self.data[vehicle_type]['timestamp'] = pd.to_datetime(self.data[vehicle_type]['timestamp'])
+                except:
+                    pass
+        
+        # Add the new data
+        self.data[vehicle_type] = pd.concat([self.data[vehicle_type], df], ignore_index=True)
+        
+        # Remove duplicates based on timestamp if it exists
+        if 'timestamp' in self.data[vehicle_type].columns:
+            self.data[vehicle_type] = self.data[vehicle_type].drop_duplicates(subset=['timestamp']).reset_index(drop=True)
+        
+        # Maintain maximum size
+        if len(self.data[vehicle_type]) > self.max_points:
+            self.data[vehicle_type] = self.data[vehicle_type].iloc[-self.max_points:]
